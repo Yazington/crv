@@ -1,0 +1,13 @@
+# Local Postgres with pgvector. Spring Boot starts it on `bootRun` (spring-boot-docker-compose).
+name: crv
+services:
+  postgres:
+    image: 'pgvector/pgvector:0.8.7-pg18-trixie'
+    environment:
+      - 'POSTGRES_DB=crv'
+      - 'POSTGRES_USER=crv'
+      - 'POSTGRES_PASSWORD=crv'
+    ports:
+      - '127.0.0.1::5432'
+    labels:
+      org.springframework.boot.service-connection: postgres
