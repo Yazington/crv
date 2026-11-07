@@ -1,0 +1,211 @@
+import { useRef, useState, type FormEvent } from "react";
+import { chat, demo, search, type ChatReply, type ConstraintLabel, type ResultCard, type SearchQuery } from "./api";
+
+interface Message {
+  role: "shopper" | "assistant";
+  text: string;
+  error?: boolean;
+}
+
+const NL = "Not listed";
+const money = (v: number) => `$${v.toFixed(2)}`;
+
+// Product ids in a reply ("[B07DG1QPYZ]") are shown as small links to their card.
+function ReplyText({ text, onPick }: { text: string; onPick: (id: string) => void }) {
+  const parts = text.split(/(\[[A-Z0-9]{10}\]|\*\*[^*]+\*\*)/g);
+  return (
+    <>
+      {parts.map((p, i) => {
+        const id = /^\[([A-Z0-9]{10})\]$/.exec(p)?.[1];
+        if (id) return <button key={i} className="idref" onClick={() => onPick(id)} title="Show card">{id}</button>;
+        if (p.startsWith("**") && p.endsWith("**")) return <b key={i}>{p.slice(2, -2)}</b>;
+        return <span key={i}>{p}</span>;
+      })}
+    </>
+  );
+}
+
+function pills(q: SearchQuery | null): { key: string; label: string; remove: (q: SearchQuery) => SearchQuery }[] {
+  if (!q) return [];
+  const f = q.filter ?? {};
+  const out: { key: string; label: string; remove: (q: SearchQuery) => SearchQuery }[] = [];
+  const dropFilter = (k: keyof NonNullable<SearchQuery["filter"]>) => (x: SearchQuery) => ({ ...x, filter: { ...x.filter, [k]: null } });
+  if (q.text) out.push({ key: "text", label: q.text, remove: (x) => ({ ...x, text: null }) });
+  if (f.priceBelow != null) out.push({ key: "pb", label: `under ${money(f.priceBelow)}`, remove: dropFilter("priceBelow") });
+  if (f.priceAtMost != null) out.push({ key: "pm", label: `up to ${money(f.priceAtMost)}`, remove: dropFilter("priceAtMost") });
+  if (f.priceAbove != null) out.push({ key: "pa", label: `over ${money(f.priceAbove)}`, remove: dropFilter("priceAbove") });
+  if (f.priceAtLeast != null) out.push({ key: "pl", label: `from ${money(f.priceAtLeast)}`, remove: dropFilter("priceAtLeast") });
+  if (f.minRating != null) out.push({ key: "r", label: `${f.minRating}★ and up`, remove: dropFilter("minRating") });
+  if (f.brand) out.push({ key: "b", label: f.brand, remove: dropFilter("brand") });
+  if (q.color) out.push({ key: "c", label: q.color, remove: (x) => ({ ...x, color: null }) });
+  if (q.size) out.push({ key: "s", label: `size ${q.size}`, remove: (x) => ({ ...x, size: null }) });
+  return out;
+}
+
+const LABEL_TEXT: Record<ConstraintLabel["match"], string> = { MATCH: "✓", PARTIAL: "≈", UNKNOWN: "?", NO: "✕" };
+
+function Card({ item, active }: { item: ResultCard; active: boolean }) {
+  const { product: p, labels } = item;
+  const v = p.lead;
+  const others = p.colors.filter((c) => c !== v.color);
+  return (
+    <article className={`card${active ? " active" : ""}`} id={`card-${p.productId}`}>
+      <div className="img">
+        {v.imageUrl ? <img src={v.imageUrl} alt={v.title} loading="lazy" /> : <span className="muted">No photo</span>}
+      </div>
+      <div className="body">
+        <div className="title" title={v.title}>{v.title}</div>
+        <div className="row">
+          <span className="price">{money(v.price)}</span>
+          {p.maxPrice > p.minPrice && <span className="muted" title="Price range across variants">{money(p.minPrice)}–{money(p.maxPrice)}</span>}
+        </div>
+        <div className="row muted">
+          <span>{v.averageRating != null ? `★ ${v.averageRating.toFixed(1)}` : `★ ${NL}`}</span>
+          <span>({v.ratingCount ?? 0})</span>
+          <span className="brand">{v.brand ?? NL}</span>
+        </div>
+        <div className="row small">
+          <span title="Colour of this listing">{v.color ?? NL}</span>
+          <span>·</span>
+          <span title="Size of this listing">{v.size ?? NL}</span>
+        </div>
+        {others.length > 0 && (
+          <div className="seen small muted" title={p.colors.join(", ")}>Seen in: {p.colors.slice(0, 5).join(", ")}{p.colors.length > 5 ? "…" : ""}</div>
+        )}
+        {labels.length > 0 && (
+          <div className="labels">
+            {labels.map((l) => (
+              <span key={l.constraint} className={`lab ${l.match.toLowerCase()}`}
+                title={`${l.constraint} "${l.wanted}": ${l.match.toLowerCase()} (catalog: ${l.value ?? NL})`}>
+                {LABEL_TEXT[l.match]} {l.constraint}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    </article>
+  );
+}
+
+export function App() {
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [cards, setCards] = useState<ResultCard[]>([]);
+  const [constraints, setConstraints] = useState<SearchQuery | null>(null);
+  const [quick, setQuick] = useState<string[]>([]);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [active, setActive] = useState<string | null>(null);
+  const [millis, setMillis] = useState<number | null>(null);
+  const endRef = useRef<HTMLDivElement>(null);
+
+  const apply = (r: ChatReply) => {
+    setConversationId(r.conversationId);
+    setMessages((m) => [...m, { role: "assistant", text: r.error ? `${r.reply || "Something went wrong."}` : r.reply, error: r.error != null }]);
+    if (r.products) setCards(r.products);
+    if (r.constraints) setConstraints(r.constraints);
+    setQuick(r.quickReplies);
+    setMillis(r.millis);
+  };
+
+  const send = async (text: string) => {
+    const msg = text.trim();
+    if (!msg || busy) return;
+    setInput("");
+    setQuick([]);
+    setMessages((m) => [...m, { role: "shopper", text: msg }]);
+    setBusy(true);
+    try {
+      apply(await chat(msg, conversationId));
+    } catch (e: unknown) {
+      setMessages((m) => [...m, { role: "assistant", text: `Couldn't reach the assistant (${e instanceof Error ? e.message : "error"}). Try again.`, error: true }]);
+    } finally {
+      setBusy(false);
+      setTimeout(() => endRef.current?.scrollIntoView({ behavior: "smooth" }), 0);
+    }
+  };
+
+  const removePill = async (remove: (q: SearchQuery) => SearchQuery) => {
+    if (!constraints) return;
+    const next = remove(constraints);
+    setConstraints(next);
+    setBusy(true);
+    try {
+      const r = await search(next, conversationId);
+      setCards(r.items);
+    } catch {
+      setMessages((m) => [...m, { role: "assistant", text: "Couldn't rerun the search.", error: true }]);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const pick = (id: string) => {
+    setActive(id);
+    document.getElementById(`card-${id}`)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  };
+
+  const onSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    void send(input);
+  };
+
+  return (
+    <div className="app">
+      <section className="chat" aria-label="Chat">
+        <header className="bar">
+          <b>crv</b>
+          <span className="muted">Amazon Fashion assistant{demo ? " · demo data" : ""}</span>
+        </header>
+        <div className="log" aria-live="polite">
+          {messages.length === 0 && (
+            <div className="empty">
+              <div className="muted small">Try:</div>
+              {["Show me running shoes under $120.", "I'm looking for orange running shorts in size small.", "How many Nike products do you have?"].map((s) => (
+                <button key={s} className="chip" onClick={() => void send(s)}>{s}</button>
+              ))}
+            </div>
+          )}
+          {messages.map((m, i) => (
+            <div key={i} className={`msg ${m.role}${m.error ? " err" : ""}`}>
+              {m.role === "assistant" ? <ReplyText text={m.text} onPick={pick} /> : m.text}
+            </div>
+          ))}
+          {busy && <div className="msg assistant muted">…</div>}
+          <div ref={endRef} />
+        </div>
+        {quick.length > 0 && (
+          <div className="quick">
+            {quick.map((q) => <button key={q} className="chip" onClick={() => void send(q)} disabled={busy}>{q}</button>)}
+          </div>
+        )}
+        <form className="input" onSubmit={onSubmit}>
+          <input value={input} onChange={(e) => setInput(e.target.value)} placeholder="Ask about the catalog…" aria-label="Message" maxLength={2000} />
+          <button type="submit" disabled={busy || !input.trim()}>Send</button>
+        </form>
+      </section>
+      <section className="results" aria-label="Products found">
+        <header className="bar">
+          <span><b>{cards.length}</b> products</span>
+          <div className="pills">
+            {pills(constraints).map((p) => (
+              <span key={p.key} className="pill">
+                {p.label}
+                <button aria-label={`Remove ${p.label}`} onClick={() => void removePill(p.remove)} disabled={busy}>×</button>
+              </span>
+            ))}
+          </div>
+          {millis != null && <span className="muted small">{(millis / 1000).toFixed(1)}s</span>}
+        </header>
+        {cards.length === 0 ? (
+          <div className="empty muted small">Products the assistant finds show up here.</div>
+        ) : (
+          <div className="grid">
+            {cards.map((c) => <Card key={c.product.productId} item={c} active={active === c.product.productId} />)}
+          </div>
+        )}
+        <footer className="note muted small">Prices are catalog prices for this demo, not live Amazon prices. Stock and delivery aren't in the catalog.</footer>
+      </section>
+    </div>
+  );
+}
