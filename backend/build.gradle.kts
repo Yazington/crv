@@ -23,6 +23,12 @@ repositories {
     mavenCentral()
 }
 
+dependencyManagement {
+    imports {
+        mavenBom("org.springframework.ai:spring-ai-bom:2.0.2")
+    }
+}
+
 dependencies {
     implementation("org.springframework.boot:spring-boot-starter-webmvc")
     implementation("org.springframework.boot:spring-boot-starter-data-jpa")
@@ -31,6 +37,8 @@ dependencies {
     implementation("org.flywaydb:flyway-database-postgresql")
     implementation("org.springdoc:springdoc-openapi-starter-webmvc-api:3.2.0")
     implementation("org.jspecify:jspecify:1.0.1")
+    // The assistant: DeepSeek on Fireworks through its OpenAI-compatible API (requirements.md, decision 14).
+    implementation("org.springframework.ai:spring-ai-starter-model-openai")
     developmentOnly("org.springframework.boot:spring-boot-docker-compose")
     runtimeOnly("org.postgresql:postgresql")
 
