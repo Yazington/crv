@@ -1,5 +1,6 @@
-import { useRef, useState, type FormEvent } from "react";
-import { chat, demo, search, similar, type ChatReply, type ConstraintLabel, type ResultCard, type SearchQuery } from "./api";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { ProductPage } from "./ProductPage";
+import { chat, demo, home, recordClick, search, similar, type HomeFeed, type Source, type ChatReply, type ConstraintLabel, type ResultCard, type SearchQuery } from "./api";
 
 interface Message {
   role: "shopper" | "assistant";
@@ -45,18 +46,18 @@ function pills(q: SearchQuery | null): { key: string; label: string; remove: (q:
 
 const LABEL_TEXT: Record<ConstraintLabel["match"], string> = { MATCH: "✓", PARTIAL: "≈", UNKNOWN: "?", NO: "✕" };
 
-function Card({ item, n, active, onSimilar }: { item: ResultCard; n: number; active: boolean; onSimilar: (id: string) => void }) {
+function Card({ item, n, active, onSimilar, onOpen }: { item: ResultCard; n: number; active: boolean; onSimilar: (id: string) => void; onOpen: (id: string) => void }) {
   const { product: p, labels } = item;
   const v = p.lead;
   const others = p.colors.filter((c) => c !== v.color);
   return (
     <article className={`card${active ? " active" : ""}`} id={`card-${p.productId}`}>
-      <div className="img">
-        <span className="num" aria-label={`Product ${n}`}>{n}</span>
-        {v.imageUrl ? <img src={v.imageUrl} alt={v.title} loading="lazy" /> : <span className="muted">No photo</span>}
-      </div>
+      <button className="img" onClick={() => onOpen(p.productId)} aria-label={`Open ${v.title}`}>
+        <span className="num">{n}</span>
+        {v.imageUrl ? <img src={v.imageUrl} alt="" loading="lazy" /> : <span className="muted">No photo</span>}
+      </button>
       <div className="body">
-        <div className="title" title={v.title}>{v.title}</div>
+        <button className="title linkish" title={v.title} onClick={() => onOpen(p.productId)}>{v.title}</button>
         <div className="row">
           <span className="price">{money(v.price)}</span>
           {p.maxPrice > p.minPrice && <span className="muted" title="Price range across variants">{money(p.minPrice)}–{money(p.maxPrice)}</span>}
@@ -103,13 +104,35 @@ export function App() {
   const [active, setActive] = useState<string | null>(null);
   const [millis, setMillis] = useState<number | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
+  const [route, setRoute] = useState(location.pathname);
+  const [source, setSource] = useState<Source>("CHAT");
+  const [feed, setFeed] = useState<HomeFeed | null>(null);
+  const productId = /^\/product\/([^/]+)/.exec(route)?.[1] ?? null;
+
+  const navigate = useCallback((path: string) => {
+    history.pushState(null, "", path + location.search);
+    setRoute(path);
+  }, []);
+  useEffect(() => {
+    const onPop = () => setRoute(location.pathname);
+    addEventListener("popstate", onPop);
+    return () => removeEventListener("popstate", onPop);
+  }, []);
+  useEffect(() => {
+    if (productId == null) home().then(setFeed).catch(() => setFeed(null));
+  }, [productId]);
+
+  const open = async (id: string, from: Source) => {
+    await recordClick(id, from);
+    navigate(`/product/${id}`);
+  };
 
   const apply = (r: ChatReply, sent: string) => {
     setConversationId(r.conversationId);
     setMessages((m) => [...m, r.error != null
       ? { role: "assistant", text: r.reply || "Something went wrong.", error: true, retry: sent }
       : { role: "assistant", text: r.reply }]);
-    if (r.products) setCards(r.products);
+    if (r.products) { setCards(r.products); setSource("CHAT"); if (productId) navigate("/"); }
     if (r.constraints) setConstraints(r.constraints);
     setQuick(r.quickReplies);
     setMillis(r.millis);
@@ -140,6 +163,7 @@ export function App() {
     try {
       const r = await search(next, conversationId);
       setCards(r.items);
+      setSource("SEARCH");
     } catch {
       setMessages((m) => [...m, { role: "assistant", text: "Couldn't rerun the search.", error: true }]);
     } finally {
@@ -152,6 +176,8 @@ export function App() {
     try {
       const r = await similar(id);
       setCards(r.items);
+      setSource("SIMILAR");
+      if (productId) navigate("/");
       setActive(null);
     } catch {
       setMessages((m) => [...m, { role: "assistant", text: "Couldn't load similar products.", error: true }]);
@@ -209,7 +235,7 @@ export function App() {
       </section>
       <section className="results" aria-label="Products found">
         <header className="bar">
-          <span><b>{cards.length}</b> products</span>
+          <span>{productId != null ? <b>Product</b> : cards.length > 0 ? <><b>{cards.length}</b> products</> : <b>Home</b>}</span>
           <div className="pills">
             {pills(constraints).map((p) => (
               <span key={p.key} className="pill">
@@ -220,14 +246,29 @@ export function App() {
           </div>
           {millis != null && <span className="muted small">{(millis / 1000).toFixed(1)}s</span>}
         </header>
-        {cards.length === 0 ? (
-          <div className="empty muted small">
-            {constraints ? "No products match all of these. Remove a pill to widen the search." : "Products the assistant finds show up here."}
+        {productId != null ? (
+          <div className="scroll">
+            <ProductPage productId={productId} onBack={() => navigate("/")} renderCards={(items) => (
+              <div className="grid">
+            {items.map((c, i) => <Card key={c.product.productId} item={c} n={i + 1} active={active === c.product.productId} onSimilar={(id) => void showSimilar(id)} onOpen={(id) => void open(id, "SIMILAR")} />)}
+          </div>
+            )} />
+          </div>
+        ) : cards.length > 0 ? (
+          <div className="grid">
+            {cards.map((c, i) => <Card key={c.product.productId} item={c} n={i + 1} active={active === c.product.productId} onSimilar={(id) => void showSimilar(id)} onOpen={(id) => void open(id, source)} />)}
+          </div>
+        ) : constraints ? (
+          <div className="empty muted small">No products match all of these. Remove a pill to widen the search.</div>
+        ) : feed && feed.items.length > 0 ? (
+          <div className="scroll">
+            <h2 className="pad">{feed.basis === "HISTORY" ? "Picked for you" : "Explore"}</h2>
+            <div className="grid">
+            {feed.items.map((c, i) => <Card key={c.product.productId} item={c} n={i + 1} active={active === c.product.productId} onSimilar={(id) => void showSimilar(id)} onOpen={(id) => void open(id, "HOME")} />)}
+          </div>
           </div>
         ) : (
-          <div className="grid">
-            {cards.map((c, i) => <Card key={c.product.productId} item={c} n={i + 1} active={active === c.product.productId} onSimilar={(id) => void showSimilar(id)} />)}
-          </div>
+          <div className="empty muted small">Products the assistant finds show up here.</div>
         )}
         <footer className="note muted small">Prices are sample data. Stock and delivery aren't in the catalog.</footer>
       </section>

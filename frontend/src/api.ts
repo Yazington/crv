@@ -145,3 +145,48 @@ function demoReply(message: string, conversationId: string | null): Promise<Chat
     }), 400),
   );
 }
+
+// ---- Homepage feed, clicks and product pages (feat/assistant c38c307)
+
+export interface ImageDto { large: string; hiRes: string | null; thumb: string | null; variant: string | null }
+export interface VariantDetail {
+  asin: string; title: string; brand: string | null; color: string | null; size: string | null; price: number;
+  averageRating: number | null; ratingCount: number | null; features: string[]; description: string[];
+  details: Record<string, string>; specs: Record<string, string>; images: ImageDto[];
+}
+export interface ProductDetail {
+  productId: string; minPrice: number; maxPrice: number; colors: string[]; sizes: string[];
+  images: ImageDto[]; variants: VariantDetail[];
+}
+export interface HomeFeed { basis: "RANDOM" | "HISTORY"; basedOn: string[]; items: ResultCard[] }
+export type Source = "HOME" | "CHAT" | "SEARCH" | "SIMILAR";
+
+export const shopperId: string = (() => {
+  const key = "crv.shopperId";
+  const existing = localStorage.getItem(key);
+  if (existing) return existing;
+  const id = crypto.randomUUID();
+  localStorage.setItem(key, id);
+  return id;
+})();
+
+export async function home(): Promise<HomeFeed> {
+  if (demo) return { basis: "RANDOM", basedOn: [], items: DEMO_CARDS };
+  return get<HomeFeed>(`/api/home?shopperId=${encodeURIComponent(shopperId)}&size=12`);
+}
+
+export async function product(productId: string): Promise<ProductDetail> {
+  return get<ProductDetail>(`/api/products/${encodeURIComponent(productId)}`);
+}
+
+export async function recordClick(productId: string, source: Source): Promise<void> {
+  if (demo) return;
+  try {
+    await fetch("/api/interactions", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ shopperId, productId, source }),
+    });
+  } catch {
+    // A lost click only weakens recommendations; never block opening the product.
+  }
+}
