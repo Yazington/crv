@@ -90,13 +90,21 @@ class AssistantApiTest {
     }
 
     @Test
-    void aMissingColourIsUnknownAndCountedNeverAMatch() {
+    void aMissingSizeIsUnknownAndCountedNeverAMatch() {
         var body = post("/api/search", """
-                {"text": "hoodie", "color": "red"}""");
+                {"text": "hoodie", "size": "small"}""");
         body.extractingPath("$.items[0].product.productId").isEqualTo("B000000B1");
         body.extractingPath("$.items[0].labels[1].match").isEqualTo("UNKNOWN");
         body.extractingPath("$.items[0].labels[1].value").isNull();
-        body.extractingPath("$.unknown.color").isEqualTo(1);
+        body.extractingPath("$.unknown.size").isEqualTo(1);
+    }
+
+    @Test
+    void aMissingColourIsKeptOnlyWhenThePhotoShowsIt() {
+        var body = post("/api/search", """
+                {"text": "hoodie", "color": "red"}""");
+        body.extractingPath("$.items").asArray().isEmpty();
+        body.extractingPath("$.dropped").isEqualTo(1);
     }
 
     @Test

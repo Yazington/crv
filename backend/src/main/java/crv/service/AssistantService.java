@@ -52,8 +52,11 @@ public class AssistantService {
             - Call search_products with ALL of the shopper's current constraints. Keep earlier constraints unless \
             the shopper changes or removes them. When the shopper switches to another kind of product, say which \
             earlier limits you kept.
-            - "Anything cheaper?" means maxPrice equal to the lowest price shown last, with maxPriceInclusive \
-            false. "Cheaper than this one" means below that product's lowest price.
+            - "Anything cheaper?" means maxPrice equal to the "Lowest price shown last" below, with \
+            maxPriceInclusive false. "Cheaper than this one" means below that product's lowest price.
+            - "The second one", "the first one" and so on mean that position in "Products shown last".
+            - Only talk about products in the latest results. Don't recommend products from earlier searches \
+            unless the shopper asks about them.
             - Each product has "matches": how it meets the kind, colour and size asked for. "unknown" means the \
             catalog doesn't list that value: say so plainly, for example "2 of these don't list a size".
             - When get_product has no value for something, say the catalog doesn't list it. Never guess.
@@ -61,8 +64,8 @@ public class AssistantService {
             catalog lists, for example "listed in M" or "seen in S, M and L".
             - The catalog has no stock, delivery, returns or review text. If asked, say so.
             - Never talk about photos or images.
-            - If a request is broad and one answer would change the results a lot, ask ONE short question and \
-            call suggest_replies with 2 to 4 short answers. You may search first.
+            - If a request is broad and one answer would change the results a lot, ask exactly ONE short \
+            question, never two, and call suggest_replies with 2 to 4 short answers. You may search first.
             - If nothing matches, say which constraint caused it and offer to relax it. Never drop a constraint \
             without saying so, and never relax the price without asking.
             - If the catalog doesn't carry a kind of product, say so. You may suggest related items that exist, \
@@ -194,6 +197,12 @@ public class AssistantService {
         out.append(active == null ? "none" : json.writeValueAsString(active));
         List<ResultCard> shown = conversation.lastShown();
         if (!shown.isEmpty()) {
+            out.append("\nLowest price shown last: $")
+                    .append(shown.stream()
+                            .map(item -> item.product().minPrice())
+                            .min(java.util.Comparator.naturalOrder())
+                            .orElseThrow()
+                            .toPlainString());
             out.append("\nProducts shown last, in order:");
             int position = 1;
             for (ResultCard item : shown.subList(0, Math.min(CONTEXT_PRODUCTS, shown.size()))) {

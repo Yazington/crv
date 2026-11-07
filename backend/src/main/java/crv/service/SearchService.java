@@ -353,7 +353,7 @@ public class SearchService {
 
     /**
      * Moves products whose photo shows the colour to the front of the checked top results, keeping order otherwise
-     * (AC1.6). A product whose colour text isn't a usable colour is dropped when its photo shows another colour.
+     * (AC1.6). A product whose colour text isn't a usable colour is kept only when its photo shows the colour.
      */
     private List<Candidate> photoFirst(String color, List<Candidate> candidates) {
         int checked = Math.min(settings.photoChecks(), candidates.size());
@@ -369,11 +369,14 @@ public class SearchService {
         for (Candidate c : candidates.subList(0, checked)) {
             top.add(c.withPhoto(seen.getOrDefault(c.product().productId(), PhotoMatch.NOT_CHECKED)));
         }
-        // When the colour text isn't usable, the photo is the only evidence: drop it if it shows another colour.
-        top.removeIf(c -> c.photo() == PhotoMatch.NO && c.colorMatch() == ConstraintMatch.UNKNOWN);
         top.sort(Comparator.comparingInt(c -> photoRank(c.photo())));
         List<Candidate> ordered = new ArrayList<>(top);
         ordered.addAll(candidates.subList(checked, candidates.size()));
+        // When the colour text isn't a usable colour, only the photo can show the colour: keep the product only
+        // if its photo does (AC4.3).
+        ordered.removeIf(c -> c.colorMatch() == ConstraintMatch.UNKNOWN
+                && c.photo() != PhotoMatch.YES
+                && c.photo() != PhotoMatch.PARTLY);
         return ordered;
     }
 
