@@ -1,10 +1,11 @@
 import { useRef, useState, type FormEvent } from "react";
-import { chat, demo, search, type ChatReply, type ConstraintLabel, type ResultCard, type SearchQuery } from "./api";
+import { chat, demo, search, similar, type ChatReply, type ConstraintLabel, type ResultCard, type SearchQuery } from "./api";
 
 interface Message {
   role: "shopper" | "assistant";
   text: string;
   error?: boolean;
+  retry?: string;
 }
 
 const NL = "Not listed";
@@ -44,13 +45,14 @@ function pills(q: SearchQuery | null): { key: string; label: string; remove: (q:
 
 const LABEL_TEXT: Record<ConstraintLabel["match"], string> = { MATCH: "✓", PARTIAL: "≈", UNKNOWN: "?", NO: "✕" };
 
-function Card({ item, active }: { item: ResultCard; active: boolean }) {
+function Card({ item, n, active, onSimilar }: { item: ResultCard; n: number; active: boolean; onSimilar: (id: string) => void }) {
   const { product: p, labels } = item;
   const v = p.lead;
   const others = p.colors.filter((c) => c !== v.color);
   return (
     <article className={`card${active ? " active" : ""}`} id={`card-${p.productId}`}>
       <div className="img">
+        <span className="num" aria-label={`Product ${n}`}>{n}</span>
         {v.imageUrl ? <img src={v.imageUrl} alt={v.title} loading="lazy" /> : <span className="muted">No photo</span>}
       </div>
       <div className="body">
@@ -60,8 +62,7 @@ function Card({ item, active }: { item: ResultCard; active: boolean }) {
           {p.maxPrice > p.minPrice && <span className="muted" title="Price range across variants">{money(p.minPrice)}–{money(p.maxPrice)}</span>}
         </div>
         <div className="row muted">
-          <span>{v.averageRating != null ? `★ ${v.averageRating.toFixed(1)}` : `★ ${NL}`}</span>
-          <span>({v.ratingCount ?? 0})</span>
+          <span title="Rating and review count">{v.averageRating != null && v.ratingCount != null ? `★ ${v.averageRating.toFixed(1)} (${v.ratingCount})` : `Rating ${NL.toLowerCase()}`}</span>
           <span className="brand">{v.brand ?? NL}</span>
         </div>
         <div className="row small">
@@ -71,6 +72,9 @@ function Card({ item, active }: { item: ResultCard; active: boolean }) {
         </div>
         {others.length > 0 && (
           <div className="seen small muted" title={p.colors.join(", ")}>Seen in: {p.colors.slice(0, 5).join(", ")}{p.colors.length > 5 ? "…" : ""}</div>
+        )}
+        {p.sizes.length > 1 && (
+          <div className="seen small muted" title={p.sizes.join(", ")}>Sizes: {p.sizes.slice(0, 6).join(", ")}{p.sizes.length > 6 ? "…" : ""}</div>
         )}
         {labels.length > 0 && (
           <div className="labels">
@@ -82,6 +86,7 @@ function Card({ item, active }: { item: ResultCard; active: boolean }) {
             ))}
           </div>
         )}
+        <button className="more" onClick={() => onSimilar(p.productId)} title="Show similar products">More like this</button>
       </div>
     </article>
   );
@@ -99,9 +104,11 @@ export function App() {
   const [millis, setMillis] = useState<number | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
-  const apply = (r: ChatReply) => {
+  const apply = (r: ChatReply, sent: string) => {
     setConversationId(r.conversationId);
-    setMessages((m) => [...m, { role: "assistant", text: r.error ? `${r.reply || "Something went wrong."}` : r.reply, error: r.error != null }]);
+    setMessages((m) => [...m, r.error != null
+      ? { role: "assistant", text: r.reply || "Something went wrong.", error: true, retry: sent }
+      : { role: "assistant", text: r.reply }]);
     if (r.products) setCards(r.products);
     if (r.constraints) setConstraints(r.constraints);
     setQuick(r.quickReplies);
@@ -116,9 +123,9 @@ export function App() {
     setMessages((m) => [...m, { role: "shopper", text: msg }]);
     setBusy(true);
     try {
-      apply(await chat(msg, conversationId));
+      apply(await chat(msg, conversationId), msg);
     } catch (e: unknown) {
-      setMessages((m) => [...m, { role: "assistant", text: `Couldn't reach the assistant (${e instanceof Error ? e.message : "error"}). Try again.`, error: true }]);
+      setMessages((m) => [...m, { role: "assistant", text: `Couldn't reach the assistant (${e instanceof Error ? e.message : "error"}).`, error: true, retry: msg }]);
     } finally {
       setBusy(false);
       setTimeout(() => endRef.current?.scrollIntoView({ behavior: "smooth" }), 0);
@@ -135,6 +142,19 @@ export function App() {
       setCards(r.items);
     } catch {
       setMessages((m) => [...m, { role: "assistant", text: "Couldn't rerun the search.", error: true }]);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const showSimilar = async (id: string) => {
+    setBusy(true);
+    try {
+      const r = await similar(id);
+      setCards(r.items);
+      setActive(null);
+    } catch {
+      setMessages((m) => [...m, { role: "assistant", text: "Couldn't load similar products.", error: true }]);
     } finally {
       setBusy(false);
     }
@@ -169,9 +189,12 @@ export function App() {
           {messages.map((m, i) => (
             <div key={i} className={`msg ${m.role}${m.error ? " err" : ""}`}>
               {m.role === "assistant" ? <ReplyText text={m.text} onPick={pick} /> : m.text}
+              {m.retry != null && i === messages.length - 1 && (
+                <button className="chip retry" onClick={() => { const t = m.retry ?? ""; setMessages((x) => x.slice(0, -2)); void send(t); }} disabled={busy}>Retry</button>
+              )}
             </div>
           ))}
-          {busy && <div className="msg assistant muted">…</div>}
+          {busy && <div className="msg assistant muted" role="status">Searching the catalog…</div>}
           <div ref={endRef} />
         </div>
         {quick.length > 0 && (
@@ -198,13 +221,15 @@ export function App() {
           {millis != null && <span className="muted small">{(millis / 1000).toFixed(1)}s</span>}
         </header>
         {cards.length === 0 ? (
-          <div className="empty muted small">Products the assistant finds show up here.</div>
+          <div className="empty muted small">
+            {constraints ? "No products match all of these. Remove a pill to widen the search." : "Products the assistant finds show up here."}
+          </div>
         ) : (
           <div className="grid">
-            {cards.map((c) => <Card key={c.product.productId} item={c} active={active === c.product.productId} />)}
+            {cards.map((c, i) => <Card key={c.product.productId} item={c} n={i + 1} active={active === c.product.productId} onSimilar={(id) => void showSimilar(id)} />)}
           </div>
         )}
-        <footer className="note muted small">Prices are catalog prices for this demo, not live Amazon prices. Stock and delivery aren't in the catalog.</footer>
+        <footer className="note muted small">Prices are sample data. Stock and delivery aren't in the catalog.</footer>
       </section>
     </div>
   );

@@ -35,8 +35,10 @@ button:disabled { cursor: default; opacity: 0.5; }
 .grid { flex: 1; overflow-y: auto; padding: 8px; display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; align-content: start; }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; display: flex; flex-direction: column; }
 .card.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
-.img { height: 150px; display: grid; place-items: center; background: #fff; border-bottom: 1px solid var(--line); }
-.img img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.img { position: relative; height: 150px; overflow: hidden; background: #fff; border-bottom: 1px solid var(--line); }
+.num { position: absolute; top: 4px; left: 4px; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 9px; background: var(--text); color: #fff; font-size: 11px; font-weight: 600; display: grid; place-items: center; }
+.img img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.img .muted { display: grid; place-items: center; height: 100%; }
 .body { padding: 6px 8px; display: flex; flex-direction: column; gap: 2px; }
 .title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 12px; }
 .row { display: flex; gap: 4px; align-items: baseline; flex-wrap: wrap; }
@@ -48,3 +50,7 @@ button:disabled { cursor: default; opacity: 0.5; }
 .lab.match { color: var(--ok); } .lab.partial { color: var(--part); } .lab.unknown { color: var(--unk); } .lab.no { color: var(--no); }
 .note { padding: 4px 10px; border-top: 1px solid var(--line); background: var(--panel); }
 @media (max-width: 720px) { .app { grid-template-columns: 1fr; grid-template-rows: 55vh 45vh; } .chat { border-right: 0; border-bottom: 1px solid var(--line); } }
+.more { margin-top: 4px; align-self: flex-start; border: 1px solid var(--line); background: none; border-radius: 4px; padding: 1px 6px; font-size: 11px; color: var(--muted); }
+.more:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
+.retry { display: block; margin-top: 4px; }
+.body { flex: 1; }

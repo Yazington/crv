@@ -73,6 +73,17 @@ export interface SearchResult {
   totalProducts: number;
 }
 
+async function get<T>(path: string): Promise<T> {
+  const res = await fetch(path);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return (await res.json()) as T;
+}
+
+export async function similar(productId: string): Promise<SearchResult> {
+  if (demo) return { query: {}, items: DEMO_CARDS, totalProducts: DEMO_CARDS.length };
+  return get<SearchResult>(`/api/products/${encodeURIComponent(productId)}/similar`);
+}
+
 async function post<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(path, {
     method: "POST",
